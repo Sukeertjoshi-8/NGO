@@ -1,191 +1,384 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { db } from './firebase';
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc } from 'firebase/firestore';
 import {
-  ArrowLeft,
-  Map,
-  Brain,
-  Flame,
-  Droplets,
-  Ambulance,
-  Users,
-  AlertTriangle,
-  Radio,
-  Send,
+  ArrowLeft, Activity, AlertTriangle, Radio, Crosshair, CheckCircle,
+  Truck, Loader2, ScanSearch, Map as MapIcon, Shield, Signal, Users, Zap
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════
-   Dummy incident data
+   SEED CRISES — 10 across India
    ═══════════════════════════════════════════════════════ */
-const INCIDENTS = [
-  {
-    id: 1, emoji: '🔥', category: 'Fire/Smoke', icon: Flame,
-    description: 'Warehouse fire reported near Sector 14. Multiple structures at risk.',
-    confidence: 92,
-    pillBg: 'bg-orange-500/15', pillText: 'text-orange-400',
-  },
-  {
-    id: 2, emoji: '🌊', category: 'Flood/Water', icon: Droplets,
-    description: 'Rising water levels at Yamuna Ghat. Evacuation needed for 200+ families.',
-    confidence: 67,
-    pillBg: 'bg-sky-500/15', pillText: 'text-sky-400',
-  },
-  {
-    id: 3, emoji: '🚑', category: 'Medical Emergency', icon: Ambulance,
-    description: 'Collapsed structure, 3 individuals trapped. First responders en route.',
-    confidence: 45,
-    pillBg: 'bg-rose-500/15', pillText: 'text-rose-400',
-  },
+const SEED = [
+  { id: 's1', description: 'Massive flooding in residential colony near Yamuna banks', urgency_category: 'Flood/Water', lat: 28.6139, lng: 77.2090, image_url: '/crisis/flood_delhi.png', ai_analysis: { severity: 92, category: 'Flood', status: 'complete', confidence: 94 }, timestamp: { seconds: Date.now() / 1000 - 300 }, cluster: 12 },
+  { id: 's2', description: 'Factory fire spreading to adjacent buildings in Surat industrial area', urgency_category: 'Fire/Smoke', lat: 21.1702, lng: 72.8311, image_url: '/crisis/fire_surat.png', ai_analysis: { severity: 88, category: 'Fire', status: 'complete', confidence: 91 }, timestamp: { seconds: Date.now() / 1000 - 900 }, cluster: 7 },
+  { id: 's3', description: 'Building collapse after earthquake tremors in Bhuj', urgency_category: 'Structural Damage', lat: 23.2420, lng: 69.6669, image_url: '/crisis/collapse_bhuj.png', ai_analysis: { severity: 95, category: 'Accident', status: 'complete', confidence: 97 }, timestamp: { seconds: Date.now() / 1000 - 1500 }, cluster: 19 },
+  { id: 's4', description: 'Landslide blocking NH-5 highway near Shimla', urgency_category: 'Structural Damage', lat: 31.1048, lng: 77.1734, image_url: '/crisis/landslide_shimla.png', ai_analysis: { severity: 78, category: 'Accident', status: 'complete', confidence: 85 }, timestamp: { seconds: Date.now() / 1000 - 2100 }, cluster: 4 },
+  { id: 's5', description: 'Cyclone damage — roofs torn off in Puri coastal village', urgency_category: 'Flood/Water', lat: 19.7983, lng: 85.8315, image_url: '/crisis/cyclone_puri.png', ai_analysis: { severity: 85, category: 'Flood', status: 'complete', confidence: 89 }, timestamp: { seconds: Date.now() / 1000 - 3600 }, cluster: 9 },
+  { id: 's6', description: 'Chemical gas leak from refinery in Vizag industrial zone', urgency_category: 'Medical Emergency', lat: 17.6868, lng: 83.2185, image_url: '/crisis/gasleak_vizag.png', ai_analysis: { severity: 91, category: 'Medical', status: 'complete', confidence: 93 }, timestamp: { seconds: Date.now() / 1000 - 4200 }, cluster: 15 },
+  { id: 's7', description: 'Train derailment near Balasore — multiple casualties', urgency_category: 'Medical Emergency', lat: 21.4934, lng: 86.9337, image_url: '/crisis/train_balasore.png', ai_analysis: { severity: 97, category: 'Accident', status: 'complete', confidence: 99 }, timestamp: { seconds: Date.now() / 1000 - 5400 }, cluster: 23 },
+  { id: 's8', description: 'Flash floods washing away bridges in Wayanad', urgency_category: 'Flood/Water', lat: 11.6854, lng: 76.1320, image_url: '/crisis/flood_wayanad.png', ai_analysis: { severity: 83, category: 'Flood', status: 'complete', confidence: 87 }, timestamp: { seconds: Date.now() / 1000 - 6000 }, cluster: 6 },
+  { id: 's9', description: 'Forest fire spreading across Uttarakhand pine belt', urgency_category: 'Fire/Smoke', lat: 30.0668, lng: 79.0193, image_url: '/crisis/forestfire_uttarakhand.png', ai_analysis: { severity: 74, category: 'Fire', status: 'complete', confidence: 81 }, timestamp: { seconds: Date.now() / 1000 - 7200 }, cluster: 3 },
+  { id: 's10', description: 'Food and water shortage in drought-hit Marathwada village', urgency_category: 'Resource Shortage', lat: 19.8762, lng: 75.3433, image_url: '/crisis/drought_marathwada.png', ai_analysis: { severity: 65, category: 'Medical', status: 'complete', confidence: 72 }, timestamp: { seconds: Date.now() / 1000 - 9000 }, cluster: 2 },
 ];
 
-function confidenceBadge(score) {
-  if (score > 80) return { bg: 'bg-emerald-500/20', text: 'text-emerald-400', label: 'High' };
-  if (score >= 50) return { bg: 'bg-amber-500/20', text: 'text-amber-400', label: 'Medium' };
-  return { bg: 'bg-red-500/20', text: 'text-red-400', label: 'Low' };
+/* ═══════════════════════════════════════════════════════
+   IST Clock
+   ═══════════════════════════════════════════════════════ */
+function useISTClock() {
+  const [time, setTime] = useState('');
+  useEffect(() => {
+    const tick = () => setTime(new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return time;
 }
 
 /* ═══════════════════════════════════════════════════════
-   CommandInsights — Dark Theme
+   Leaflet Map — Light CARTO tiles
    ═══════════════════════════════════════════════════════ */
-export default function CommandInsights({ goBack }) {
-  const [dispatched, setDispatched] = useState({});
-  const handleDispatch = (id) => setDispatched((prev) => ({ ...prev, [id]: true }));
+function TacticalMap({ reports, onSelect }) {
+  const mapRef = useRef(null);
+  const mapInst = useRef(null);
+  const markers = useRef([]);
 
-  const darkBg = {
-    backgroundImage: 'linear-gradient(to right, #ffffff05 1px, transparent 1px), linear-gradient(to bottom, #ffffff05 1px, transparent 1px)',
-    backgroundSize: '24px 24px',
-  };
+  useEffect(() => {
+    if (mapInst.current) return;
+    const init = async () => {
+      if (!document.querySelector('link[href*="leaflet"]')) {
+        const l = document.createElement('link');
+        l.rel = 'stylesheet'; l.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(l);
+      }
+      const L = await import('leaflet');
+      if (!mapRef.current || mapInst.current) return;
+      const map = L.map(mapRef.current, { zoomControl: false }).setView([22.5, 79], 5);
+      // Light tile layer
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '', maxZoom: 18 }).addTo(map);
+      L.control.zoom({ position: 'bottomright' }).addTo(map);
+      mapInst.current = map;
+      
+      // Fix for Leaflet rendering issues in flex/hidden containers
+      setTimeout(() => {
+        if (mapInst.current) {
+          mapInst.current.invalidateSize();
+          mapInst.current.setView([22.5, 79], 5);
+        }
+      }, 500);
+    };
+    init();
+    return () => { if (mapInst.current) { mapInst.current.remove(); mapInst.current = null; } };
+  }, []);
+
+  useEffect(() => {
+    if (!mapInst.current) return;
+    const update = async () => {
+      const L = await import('leaflet');
+      markers.current.forEach(m => m.remove());
+      markers.current = [];
+      reports.forEach(r => {
+        if (!r.lat || !r.lng) return;
+        const sev = r.ai_analysis?.severity || 50;
+        const crit = sev > 80;
+        const col = crit ? '#ef4444' : sev > 50 ? '#f97316' : '#10b981';
+        const sz = crit ? 18 : 14;
+        const icon = L.divIcon({
+          className: '',
+          html: `<div style="position:relative;width:${sz}px;height:${sz}px;">
+            <div style="position:absolute;inset:0;background:${col};border-radius:50%;border:2px solid #ffffff;box-shadow:0 0 8px ${col},0 0 20px ${col}40;"></div>
+            ${crit ? `<div style="position:absolute;inset:-8px;border:2px solid ${col};border-radius:50%;opacity:0;animation:rippleOut 2s ease-out infinite;"></div><div style="position:absolute;inset:-8px;border:2px solid ${col};border-radius:50%;opacity:0;animation:rippleOut 2s ease-out 0.6s infinite;"></div>` : ''}
+          </div>`,
+          iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
+        });
+        const m = L.marker([r.lat, r.lng], { icon }).addTo(mapInst.current);
+        m.on('click', () => onSelect?.(r));
+        m.bindPopup(`<div style="font-family:'Noto Sans',sans-serif;min-width:160px;"><strong style="font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:700;color:#1a2f23;">${r.ai_analysis?.category || r.urgency_category}</strong><div style="margin:3px 0;font-size:11px;color:#666;">${(r.description || '').slice(0, 60)}…</div><div style="font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:${col};">SEV ${sev}/100</div></div>`);
+        markers.current.push(m);
+      });
+    };
+    const t = setTimeout(update, 300);
+    return () => clearTimeout(t);
+  }, [reports, onSelect]);
+
+  return <div ref={mapRef} style={{ width: '100%', height: '100%', background: '#fafcfb' }} />;
+}
+
+/* ═══════════════════════════════════════════════════════
+   AI Confidence Bar
+   ═══════════════════════════════════════════════════════ */
+function ConfidenceBar({ value = 0 }) {
+  const col = value > 90 ? '#10b981' : value > 75 ? '#f97316' : '#ef4444';
+  return (
+    <div className="flex items-center gap-2 mt-1">
+      <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+        <div className="h-full rounded-full transition-all duration-700" style={{ width: `${value}%`, background: col }} />
+      </div>
+      <span className="text-[10px] font-bold font-mono" style={{ color: col }}>{value}%</span>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   Incident Card
+   ═══════════════════════════════════════════════════════ */
+function IncidentCard({ r, onDispatch, dispatched }) {
+  const ai = r.ai_analysis;
+  const sev = ai?.severity || 0;
+  const crit = sev > 80;
+  const imgSrc = r.image_url || r.image_data;
+  const borderCol = crit ? 'border-l-red-500' : 'border-l-emerald-500';
 
   return (
-    <div className="min-h-screen bg-slate-950 font-[Manrope,sans-serif] relative overflow-hidden" style={darkBg}>
-      {/* Glow */}
-      <div className="pointer-events-none fixed inset-0 flex items-center justify-center" aria-hidden="true">
-        <div className="w-[600px] h-[600px] bg-indigo-500/10 blur-[120px] rounded-full" />
-      </div>
-
-      {/* Header */}
-      <header className="relative z-10 px-4 sm:px-8 pt-6 pb-2 max-w-[1440px] mx-auto">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
-          <button id="btn-back-home" onClick={goBack}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/[0.06] border border-white/[0.1] text-slate-300 font-semibold text-sm hover:bg-white/[0.1] active:scale-95 transition-all duration-200 cursor-pointer w-fit">
-            <ArrowLeft className="w-4 h-4" /> Back to Home
-          </button>
-          <div className="flex-1">
-            <h1 className="text-xl sm:text-2xl font-extrabold text-white font-[Plus_Jakarta_Sans,sans-serif] tracking-tight">
-              Command Center:{' '}
-              <span className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
-                Live Heatmap & Dispatch
+    <div className={`bg-white border border-[#e2f0e7] shadow-sm border-l-[4px] ${borderCol} rounded-2xl overflow-hidden hover:shadow-md transition-shadow`}>
+      {/* Image strip */}
+      {imgSrc && (
+        <div className="h-28 w-full relative overflow-hidden">
+          <img src={imgSrc} alt="" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+          <div className="absolute bottom-2 left-3 flex items-center gap-2">
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-[Rajdhani] uppercase tracking-wider ${crit ? 'bg-red-500 text-white' : 'bg-emerald-500 text-white'}`}>
+              {ai?.category || r.urgency_category}
+            </span>
+            {r.cluster && (
+              <span className="px-1.5 py-0.5 rounded bg-white/30 backdrop-blur text-[10px] font-bold text-white font-mono">
+                ×{r.cluster}
               </span>
-            </h1>
-            <p className="text-sm text-slate-400 mt-0.5">
-              Real-time incident monitoring and AI-prioritized dispatch queue.
-            </p>
+            )}
           </div>
         </div>
-      </header>
+      )}
 
-      {/* Main Grid */}
-      <main className="relative z-10 px-4 sm:px-8 py-6 max-w-[1440px] mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* LEFT — Map */}
-          <section className="lg:col-span-2">
-            <div className="bg-white/[0.04] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden animate-[fadeInUp_0.45s_ease-out]">
-              <div className="flex items-center justify-between px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-indigo-500/15 flex items-center justify-center">
-                    <Map className="w-5 h-5 text-indigo-400" strokeWidth={1.8} />
-                  </div>
-                  <h2 className="text-base font-bold text-white font-[Plus_Jakarta_Sans,sans-serif]">Live Incident Map</h2>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
-                  </span>
-                  <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Live</span>
-                </div>
-              </div>
-
-              <div className="w-full bg-slate-900">
-                <iframe
-                  title="KAVACH Live Command Map" width="100%" height="550"
-                  src="https://felt.com/embed/map/Untitled-Map-UnYjmuU6S7Cw5JqsRDOgFD?loc=12.9716%2C77.5946%2C14z&legend=1&cooperativeGestures=1&link=1&geolocation=0&zoomControls=1&scaleBar=1"
-                  frameBorder="0" referrerPolicy="strict-origin-when-cross-origin" style={{ display: 'block' }}
-                />
-              </div>
-
-              {/* Stats bar */}
-              <div className="grid grid-cols-3 divide-x divide-white/[0.06]">
-                {[
-                  { value: '12', label: 'Active Incidents', icon: AlertTriangle, color: 'text-red-400' },
-                  { value: '47', label: 'Volunteers Deployed', icon: Users, color: 'text-emerald-400' },
-                  { value: '3', label: 'Critical Zones', icon: Radio, color: 'text-indigo-400' },
-                ].map((stat) => (
-                  <div key={stat.label} className="flex items-center justify-center gap-3 py-4 px-2">
-                    <stat.icon className={`w-4 h-4 ${stat.color} shrink-0`} strokeWidth={2} />
-                    <div className="text-center sm:text-left">
-                      <p className="text-lg font-extrabold text-white font-[Plus_Jakarta_Sans,sans-serif] leading-none">{stat.value}</p>
-                      <p className="text-[10px] sm:text-xs text-slate-400 mt-0.5 leading-tight">{stat.label}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          {/* RIGHT — AI Queue */}
-          <section className="lg:col-span-1">
-            <div className="bg-white/[0.04] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden animate-[fadeInUp_0.5s_ease-out_0.1s_both]">
-              <div className="flex items-center gap-3 px-6 py-4">
-                <div className="w-10 h-10 rounded-xl bg-indigo-500/15 flex items-center justify-center">
-                  <Brain className="w-5 h-5 text-indigo-400" strokeWidth={1.8} />
-                </div>
-                <h2 className="text-base font-bold text-white font-[Plus_Jakarta_Sans,sans-serif]">AI Priority Queue</h2>
-              </div>
-
-              <div className="overflow-y-auto max-h-[600px] px-4 pb-4 space-y-4 scroll-smooth">
-                {INCIDENTS.map((incident, idx) => {
-                  const badge = confidenceBadge(incident.confidence);
-                  const isDispatched = dispatched[incident.id];
-                  return (
-                    <div key={incident.id}
-                      className="bg-white/[0.04] border border-white/[0.06] rounded-xl p-5 hover:bg-white/[0.06] transition-colors duration-200 animate-[fadeInUp_0.4s_ease-out_both]"
-                      style={{ animationDelay: `${(idx + 1) * 120}ms` }}>
-                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${incident.pillBg} ${incident.pillText}`}>
-                        <span>{incident.emoji}</span> {incident.category}
-                      </span>
-                      <p className="mt-3 text-sm text-slate-300 leading-relaxed">{incident.description}</p>
-                      <div className="mt-4 flex items-center justify-between gap-3 flex-wrap">
-                        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${badge.bg} ${badge.text}`}>
-                          <span className="text-[10px] font-semibold uppercase tracking-wide">AI Confidence:</span> {incident.confidence}%
-                        </div>
-                        {isDispatched ? (
-                          <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">✓ Dispatched</span>
-                        ) : (
-                          <button id={`btn-dispatch-${incident.id}`} onClick={() => handleDispatch(incident.id)}
-                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white text-xs font-bold shadow-md shadow-indigo-500/20 hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer">
-                            <Send className="w-3 h-3" /> Dispatch Volunteers
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </section>
+      <div className="p-4 space-y-3">
+        {/* Severity */}
+        <div className="flex items-center justify-between">
+          <span className={`text-xs font-bold font-[Rajdhani] uppercase tracking-widest ${crit ? 'text-red-500' : 'text-emerald-600'}`}>
+            {crit ? '⚠ CRITICAL' : 'MONITORED'} — {sev}/100
+          </span>
+          <span className="text-[9px] font-mono text-gray-500">
+            {r.timestamp ? new Date(r.timestamp.seconds * 1000).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) : 'NOW'}
+          </span>
         </div>
-      </main>
 
-      <footer className="relative z-10 py-6 text-center">
-        <p className="text-xs text-slate-600 tracking-widest uppercase font-[Plus_Jakarta_Sans,sans-serif]">
-          Powered by KAVACH Intelligence Engine v1.0
-        </p>
-      </footer>
+        {/* Description */}
+        <p className="text-xs text-gray-700 leading-relaxed font-[Noto_Sans] line-clamp-2">{r.description}</p>
 
+        {/* AI Confidence */}
+        {ai?.confidence && (
+          <div>
+            <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">AI Confidence</span>
+            <ConfidenceBar value={ai.confidence} />
+          </div>
+        )}
+
+        {/* Coords */}
+        <div className="flex items-center gap-1.5 text-[10px] text-gray-500 font-mono">
+          <Crosshair className="w-3 h-3" />
+          {r.lat && r.lng ? `${Number(r.lat).toFixed(4)}, ${Number(r.lng).toFixed(4)}` : 'NO FIX'}
+        </div>
+
+        {/* Dispatch */}
+        <button
+          onClick={() => { if (!dispatched) onDispatch?.(r.id); }}
+          className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-[11px] font-bold font-[Rajdhani] uppercase tracking-wider transition-all ${dispatched
+              ? 'bg-[#d4eedd] text-[#1a2f23] cursor-default'
+              : 'bg-[#1a2f23] text-white hover:bg-[#2a4534] shadow-md shadow-[#1a2f23]/10 cursor-pointer active:scale-[0.98]'
+            }`}
+        >
+          {dispatched ? <><CheckCircle className="w-3.5 h-3.5" /> DISPATCHED</> : <><Truck className="w-3.5 h-3.5" /> DISPATCH TEAM</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   COMMAND INSIGHTS — Light Theme
+   ═══════════════════════════════════════════════════════ */
+export default function CommandInsights({ goBack }) {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [dispatched, setDispatched] = useState({});
+  const [dispatchToast, setDispatchToast] = useState(false);
+  const ist = useISTClock();
+
+  useEffect(() => {
+    setReports(SEED);
+    setLoading(false);
+    if (!db) return;
+    let unsub;
+    try {
+      const q = query(collection(db, 'reports'), orderBy('timestamp', 'desc'));
+      unsub = onSnapshot(q, snap => {
+        const live = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setReports([...live, ...SEED]);
+      }, () => { });
+    } catch { }
+    return () => { if (unsub) unsub(); };
+  }, []);
+
+  const handleResolve = async (id) => {
+    if (id.startsWith('s')) { setReports(p => p.filter(r => r.id !== id)); return; }
+    try { if (db) await deleteDoc(doc(db, 'reports', id)); } catch { }
+  };
+
+  const handleDispatch = (id) => {
+    setDispatched(p => ({ ...p, [id]: true }));
+    setDispatchToast(true);
+    setTimeout(() => setDispatchToast(false), 2500);
+  };
+
+  const critCount = reports.filter(r => (r.ai_analysis?.severity || 0) > 80).length;
+  const totalCluster = reports.reduce((s, r) => s + (r.cluster || 1), 0);
+
+  /* ── STATS ── */
+  const stats = [
+    { label: 'ACTIVE INCIDENTS', value: reports.length, icon: AlertTriangle, color: 'text-red-500', bg: 'bg-red-50 border-red-100' },
+    { label: 'CRITICAL', value: critCount, icon: Zap, color: 'text-orange-500', bg: 'bg-orange-50 border-orange-100' },
+    { label: 'AFFECTED CLUSTERS', value: totalCluster, icon: Users, color: 'text-blue-500', bg: 'bg-blue-50 border-blue-100' },
+    { label: 'AVG CONFIDENCE', value: Math.round(reports.reduce((s, r) => s + (r.ai_analysis?.confidence || 0), 0) / reports.length) + '%', icon: Signal, color: 'text-emerald-500', bg: 'bg-emerald-50 border-emerald-100' },
+    { label: 'RESPONSE RATE', value: '89%', icon: Activity, color: 'text-indigo-500', bg: 'bg-indigo-50 border-indigo-100' },
+  ];
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#fafcfb] flex flex-col items-center justify-center text-[#1a2f23] gap-4 font-[Rajdhani]">
+        <Loader2 className="w-12 h-12 animate-spin" />
+        <p className="text-sm font-bold uppercase tracking-[0.4em]">Initializing Map…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-screen bg-[#fafcfb] font-[Noto_Sans] text-[#111] flex flex-col overflow-hidden">
+
+      {/* ═══ NAV BAR ═══ */}
+      <nav className="h-16 flex items-center justify-between px-4 sm:px-6 lg:px-8 bg-[#1a2f23] text-white shrink-0 mx-2 mt-2 sm:mx-4 sm:mt-4 rounded-2xl shadow-xl shadow-[#1a2f23]/10 relative z-50">
+        <div className="flex items-center gap-3">
+          <button onClick={goBack} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold font-[Rajdhani] uppercase tracking-wider transition-all cursor-pointer">
+            <ArrowLeft className="w-3.5 h-3.5" /> EXIT
+          </button>
+          <div className="hidden sm:flex items-center gap-2 ml-2">
+            <div className="w-6 h-6 rounded bg-[#d4eedd] flex items-center justify-center">
+              <Shield className="w-3.5 h-3.5 text-[#1a2f23]" />
+            </div>
+            <span className="text-sm font-bold font-[Rajdhani] uppercase tracking-[0.1em] text-white">KAVACH OPS</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Radio className="w-4 h-4 text-[#d4eedd] animate-pulse" />
+          <span className="text-sm font-bold font-[Rajdhani] uppercase tracking-[0.1em] text-[#d4eedd]">
+            COMMAND CENTER
+          </span>
+        </div>
+
+        <div className="flex items-center gap-5">
+          <div className="hidden sm:block text-right">
+            <p className="text-[9px] text-[#8ecf9f] uppercase tracking-widest font-bold font-[Rajdhani]">IST</p>
+            <p className="text-sm font-bold font-mono text-white tabular-nums">{ist}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] text-[#8ecf9f] uppercase tracking-widest font-bold font-[Rajdhani]">STATUS</p>
+            <p className="text-xs font-bold font-mono text-[#d4eedd]">● ONLINE</p>
+          </div>
+        </div>
+      </nav>
+
+      {/* ═══ MAIN CONTENT ═══ */}
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row p-2 sm:p-4 gap-4">
+
+        {/* ── MAP PANEL ── */}
+        <div className="flex-1 relative bg-white border border-[#e2f0e7] shadow-sm rounded-3xl overflow-hidden min-h-[400px] lg:min-h-0">
+          <div className="absolute top-4 left-4 z-[400] flex items-center gap-2 px-3 py-2 rounded-xl bg-white/90 backdrop-blur shadow-sm border border-[#e2f0e7]">
+            <MapIcon className="w-4 h-4 text-[#1a2f23]" />
+            <span className="text-[11px] font-bold font-[Rajdhani] uppercase tracking-[0.1em] text-[#1a2f23]">THREAT MAP</span>
+            <span className="text-[9px] font-mono text-emerald-500 ml-1">● LIVE</span>
+          </div>
+          <TacticalMap reports={reports} onSelect={setSelected} />
+        </div>
+
+        {/* ── RIGHT COLUMN: STATS & QUEUE ── */}
+        <div className="w-full lg:w-[420px] flex flex-col gap-4">
+
+          {/* STATS BENTO */}
+          <div className="bg-white rounded-3xl p-4 border border-[#e2f0e7] shadow-sm shrink-0">
+            <h3 className="text-xs font-bold font-[Rajdhani] uppercase tracking-[0.15em] text-gray-500 mb-3 ml-1">Overview</h3>
+            <div className="grid grid-cols-2 gap-2">
+              {stats.slice(0, 4).map(s => (
+                <div key={s.label} className={`flex items-center gap-3 p-3 rounded-2xl border ${s.bg}`}>
+                  <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center shrink-0 shadow-sm">
+                    <s.icon className={`w-4 h-4 ${s.color}`} />
+                  </div>
+                  <div>
+                    <p className={`text-lg font-bold font-[Rajdhani] ${s.color}`}>{s.value}</p>
+                    <p className="text-[8px] text-gray-500 font-bold font-[Rajdhani] uppercase tracking-widest leading-none mt-0.5">{s.label}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* INCIDENT QUEUE */}
+          <div className="flex-1 bg-white rounded-3xl border border-[#e2f0e7] shadow-sm overflow-hidden flex flex-col">
+            <div className="px-5 py-4 border-b border-[#e2f0e7] flex items-center justify-between bg-[#fbfdfb] shrink-0">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#1a2f23]" />
+                <span className="text-sm font-bold font-[Rajdhani] uppercase tracking-[0.1em] text-[#1a2f23]">INCIDENT QUEUE</span>
+              </div>
+              <span className="text-[10px] font-mono font-bold bg-[#e2f0e7] text-[#1a2f23] px-2 py-0.5 rounded-full">{reports.length} ACTIVE</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#f3f9f5]/30">
+              {reports.map(r => (
+                <IncidentCard
+                  key={r.id}
+                  r={r}
+                  dispatched={!!dispatched[r.id]}
+                  onDispatch={handleDispatch}
+                />
+              ))}
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* ═══ DISPATCH TOAST ═══ */}
+      {dispatchToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] animate-[slideUp_0.3s_ease-out]">
+          <div className="flex items-center gap-3 px-5 py-3 bg-[#1a2f23] text-white rounded-2xl shadow-2xl">
+            <CheckCircle className="w-5 h-5 text-[#d4eedd]" />
+            <div>
+              <p className="text-sm font-bold font-[Rajdhani] uppercase tracking-wider">Dispatch Sent</p>
+              <p className="text-[11px] text-[#a3c9b3] font-[Noto_Sans]">Volunteer team has been notified.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ KEYFRAMES ═══ */}
       <style>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to   { opacity: 1; transform: translateY(0); }
+        @keyframes rippleOut {
+          0%   { transform:scale(1); opacity:0.6; }
+          100% { transform:scale(2.5); opacity:0; }
         }
+        @keyframes slideUp {
+          from { opacity:0; transform:translate(-50%,20px); }
+          to   { opacity:1; transform:translate(-50%,0); }
+        }
+        .line-clamp-2 {
+          display:-webkit-box;
+          -webkit-line-clamp:2;
+          -webkit-box-orient:vertical;
+          overflow:hidden;
+        }
+        ::-webkit-scrollbar { width:6px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:rgba(0,0,0,0.1); border-radius:10px; }
+        ::-webkit-scrollbar-thumb:hover { background:rgba(0,0,0,0.2); }
       `}</style>
     </div>
   );
