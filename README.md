@@ -80,7 +80,3 @@ For production environments, ensure all Firebase Service Account keys are remove
 
 
 ***
-
-**Hackathon Tip:** If you have any screenshots of the dark-mode dashboard or the phone UI, upload them to your GitHub repo and add them to this README right under "The Vision" section. Visuals win hackathons! 
-
-Go crush that presentation!
