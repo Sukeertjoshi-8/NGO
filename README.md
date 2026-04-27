@@ -1,6 +1,5 @@
 <<<<<<< HEAD
 # NGO
-lol
 =======
 # React + Vite
 
